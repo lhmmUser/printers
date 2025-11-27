@@ -525,54 +525,57 @@ def shiprocket_create_from_orders(
             errors.append(f"awb({sid}): exception {e}")
 
         # 3) Generate label (use shipment_id; don't require awb_code in response)
-    label_res = None
+    label_res = {}
     if generate_label and awb_results:
-        # earlier we filtered by x.get("awb_code"); that breaks when assign/awb returns no body.
-        label_shipments = [int(x["shipment_id"]) for x in awb_results]
-        if label_shipments:
-            # skip if label already exists for all shipments
-            to_request = []
-            for sid in label_shipments:
-                doc = orders_collection.find_one({"sr_shipment_id": sid})
-                if not (doc and doc.get("label_url")):
-                    to_request.append(sid)
+        label_shipments = [int(x["shipment_id"]) for x in awb_results if x.get("shipment_id")]
 
-            if to_request:
-                label_payload = {"shipment_id": to_request}
-                try:
-                    lr = requests.post(
-                        f"{SHIPROCKET_BASE}/v1/external/courier/generate/label",
-                        headers=headers,
-                        json=label_payload,
-                        timeout=60
+        for sid in label_shipments:
+            # skip if this shipment already has a label_url
+            doc = orders_collection.find_one({"sr_shipment_id": sid})
+            if doc and doc.get("label_url"):
+                continue
+
+            try:
+                payload = {"shipment_id": [sid]}
+                lr = requests.post(
+                    f"{SHIPROCKET_BASE}/v1/external/courier/generate/label",
+                    headers=headers,
+                    json=payload,
+                    timeout=60,
+                )
+
+                if lr.status_code != 200:
+                    errors.append(
+                        f"label generation failed for {sid} {lr.status_code}: {lr.text}"
                     )
-                    if lr.status_code == 200:
-                        lj = lr.json() or {}
-                        label_res = lj
-                        label_url = lj.get("label_url")
-                        not_created = lj.get("not_created") or []
+                    continue
 
-                        attempted = set(to_request)
-                        failed_set = set(
-                            int(x) for x in not_created) if not_created else set()
-                        succeeded = list(attempted - failed_set)
+                lj = lr.json() or {}
+                label_res[str(sid)] = lj
 
-                        if label_url and succeeded:
-                            orders_collection.update_many(
-                                {"sr_shipment_id": {"$in": succeeded}},
-                                {"$set": {
-                                    "label_url": label_url,
-                                    "label_created_at": datetime.utcnow().isoformat()
-                                }}
-                            )
-                        if not_created:
-                            errors.append(
-                                f"label_not_created_for: {not_created}")
-                    else:
-                        errors.append(
-                            f"label generation failed {lr.status_code}: {lr.text}")
-                except Exception as e:
-                    errors.append(f"label generation: exception {e}")
+                label_url = lj.get("label_url")
+                not_created = lj.get("not_created") or []
+
+                failed_ids = {int(x) for x in not_created if str(x).isdigit()}
+
+                # if Shiprocket created label for this shipment_id
+                if label_url and sid not in failed_ids:
+                    orders_collection.update_one(
+                        {"sr_shipment_id": sid},
+                        {
+                            "$set": {
+                                "label_url": label_url,
+                                "label_created_at": datetime.utcnow().isoformat(),
+                            }
+                        },
+                    )
+                else:
+                    errors.append(
+                        f"label_not_created_for: shipment_id={sid}, response={lj}"
+                    )
+
+            except Exception as e:
+                errors.append(f"label generation exception for {sid}: {e}")
 
     # 4) Generate pickup
     pickup_res = None
