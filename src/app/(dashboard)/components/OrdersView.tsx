@@ -17,6 +17,10 @@ type RawOrder = {
   print_sent_at?: string;
   zip?: string;
 };
+type OrdersViewProps = {
+  title?: string;
+  excludeTestDiscount?: boolean;
+};
 
 function formatPrintSentAt(value?: string): string {
   if (!value) return "-";
@@ -52,7 +56,10 @@ function formatPrintSentAt(value?: string): string {
   return `${day} ${month} ${hh}:${mm}`;
 }
 
-export default function GenesisShipDashboard() {
+export default function GenesisShipDashboard({
+  title = "Genesis — Ship Dashboard",
+  excludeTestDiscount = true,
+}: OrdersViewProps) {
   const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL || "";
 
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -393,7 +400,7 @@ export default function GenesisShipDashboard() {
             animate={{ opacity: 1 }}
             transition={{ delay: 0.1 }}
           >
-            Genesis — Ship Dashboard
+            {title}
           </motion.h2>
 
           <motion.div 
