@@ -160,6 +160,19 @@ def get_orders(
             "$options": "i",
         }
 
+    # ensure TEST# orders are excluded BEFORE counting/pagination
+    test_re = re.compile(r"^TEST#", re.I)
+
+    # If query already has clauses, convert to $and and append the negative condition
+    if query:
+        conds = []
+        for k, v in list(query.items()):
+            conds.append({k: v})
+        conds.append({"order_id": {"$not": test_re}})
+        query = {"$and": conds}
+    else:
+        query = {"order_id": {"$not": test_re}}
+
     projection = {
         "order_id": 1,
         "name": 1,
@@ -183,7 +196,7 @@ def get_orders(
     # paginated query
     cursor = (
         orders_collection.find(query, projection)
-        .sort("created_at", -1)
+        .sort("print_sent_at", -1)
         .skip((page - 1) * page_size)
         .limit(page_size)
     )
@@ -416,7 +429,7 @@ def shiprocket_create_from_orders(
     shipment_ids: List[int] = []
     errors: List[str] = []
 
-    # 1) Create orders
+    # 1) Create orders (one API call per local order)
     for oid in unique_ids:
         doc = orders_collection.find_one({"order_id": oid})
         if not doc:
@@ -428,9 +441,18 @@ def shiprocket_create_from_orders(
             existing_sid = doc.get("sr_shipment_id")
             existing_soid = doc.get("sr_order_id")
             if existing_sid:
+                # normalize to int where possible
+                try:
+                    sid_int = int(existing_sid)
+                except Exception:
+                    sid_int = existing_sid
                 created_refs.append({"order_id": oid, "sr_order_id": existing_soid,
-                                    "shipment_id": existing_sid, "skipped_create": True})
-                shipment_ids.append(int(existing_sid))
+                                     "shipment_id": existing_sid, "skipped_create": True})
+                try:
+                    shipment_ids.append(int(sid_int))
+                except Exception:
+                    # keep as-is if cannot cast
+                    shipment_ids.append(sid_int)
                 continue
 
             payload = _sr_order_payload_from_doc(doc)
@@ -459,79 +481,80 @@ def shiprocket_create_from_orders(
             created_refs.append(
                 {"order_id": oid, "sr_order_id": sr_order_id, "shipment_id": shipment_id})
             if shipment_id:
-                shipment_ids.append(int(shipment_id))
+                try:
+                    shipment_ids.append(int(shipment_id))
+                except Exception:
+                    shipment_ids.append(shipment_id)
         except Exception as e:
             errors.append(f"{oid}: exception {e}")
 
-    # If caller didn't request AWB, stop here (keeps orders unassigned)
+    # --- End creation loop. Now operate on all created shipments at once ---
 
-        # 2) Assign AWB
+    # 2) Assign AWB (run once over all shipment_ids)
     awb_results: List[Dict[str, Any]] = []
-    for sid in shipment_ids:
-        try:
-            existing = orders_collection.find_one({"sr_shipment_id": sid})
-            if existing and existing.get("awb_code"):
-                awb_results.append({
-                    "shipment_id": sid,
-                    "awb_code": existing.get("awb_code"),
-                    "courier_company_id": existing.get("courier_company_id"),
-                    "skipped_assign": True
-                })
-                continue
-
-            rr = requests.post(
-                f"{SHIPROCKET_BASE}/v1/external/courier/assign/awb",
-                headers=headers,
-                json={"shipment_id": sid},
-                timeout=30
-            )
-
-            if rr.status_code != 200:
-                # AWB assign failed
-                errors.append(f"awb({sid}) failed {rr.status_code}: {rr.text}")
-                continue
-
-            # Shiprocket docs say this may return no body.
-            # Be defensive: if body is empty, json() will raise.
+    if assign_awb and shipment_ids:
+        for sid in shipment_ids:
             try:
-                j = rr.json() or {}
-            except ValueError:
-                j = {}
+                # Query DB defensively: sr_shipment_id may be stored as int or str
+                existing = orders_collection.find_one({
+                    "$or": [{"sr_shipment_id": sid}, {"sr_shipment_id": str(sid)}]
+                })
+                if existing and existing.get("awb_code"):
+                    awb_results.append({
+                        "shipment_id": int(sid) if isinstance(sid, (int, str)) and str(sid).isdigit() else sid,
+                        "awb_code": existing.get("awb_code"),
+                        "courier_company_id": existing.get("courier_company_id"),
+                        "skipped_assign": True
+                    })
+                    continue
 
-            awb_code = j.get("awb_code")          # may be None
-            courier_id = j.get("courier_company_id")
-
-            awb_results.append({
-                "shipment_id": sid,
-                "awb_code": awb_code,
-                "courier_company_id": courier_id
-            })
-
-            # Even if awb_code is None, AWB is most likely assigned internally.
-            update_fields: Dict[str, Any] = {}
-            if awb_code is not None:
-                update_fields["awb_code"] = awb_code
-            if courier_id is not None:
-                update_fields["courier_company_id"] = courier_id
-
-            # Only update if we actually have something to set
-            if update_fields:
-                orders_collection.update_one(
-                    {"sr_shipment_id": sid},
-                    {"$set": update_fields}
+                rr = requests.post(
+                    f"{SHIPROCKET_BASE}/v1/external/courier/assign/awb",
+                    headers=headers,
+                    json={"shipment_id": sid},
+                    timeout=30
                 )
 
-        except Exception as e:
-            errors.append(f"awb({sid}): exception {e}")
+                if rr.status_code != 200:
+                    errors.append(f"awb({sid}) failed {rr.status_code}: {rr.text}")
+                    continue
 
-        # 3) Generate label (use shipment_id; don't require awb_code in response)
+                try:
+                    j = rr.json() or {}
+                except ValueError:
+                    j = {}
+
+                awb_code = j.get("awb_code")
+                courier_id = j.get("courier_company_id")
+
+                awb_entry = {
+                    "shipment_id": int(sid) if isinstance(sid, (int, str)) and str(sid).isdigit() else sid,
+                    "awb_code": awb_code,
+                    "courier_company_id": courier_id
+                }
+                awb_results.append(awb_entry)
+
+                update_fields: Dict[str, Any] = {}
+                if awb_code is not None:
+                    update_fields["awb_code"] = awb_code
+                if courier_id is not None:
+                    update_fields["courier_company_id"] = courier_id
+
+                if update_fields:
+                    orders_collection.update_one(
+                        {"$or": [{"sr_shipment_id": sid}, {"sr_shipment_id": str(sid)}]},
+                        {"$set": update_fields}
+                    )
+
+            except Exception as e:
+                errors.append(f"awb({sid}): exception {e}")
+
+    # 3) Generate label per shipment (use shipment_id; don't require awb_code)
     label_res = {}
     if generate_label and awb_results:
         label_shipments = [int(x["shipment_id"]) for x in awb_results if x.get("shipment_id")]
-
         for sid in label_shipments:
-            # skip if this shipment already has a label_url
-            doc = orders_collection.find_one({"sr_shipment_id": sid})
+            doc = orders_collection.find_one({"$or": [{"sr_shipment_id": sid}, {"sr_shipment_id": str(sid)}]})
             if doc and doc.get("label_url"):
                 continue
 
@@ -545,9 +568,7 @@ def shiprocket_create_from_orders(
                 )
 
                 if lr.status_code != 200:
-                    errors.append(
-                        f"label generation failed for {sid} {lr.status_code}: {lr.text}"
-                    )
+                    errors.append(f"label generation failed for {sid} {lr.status_code}: {lr.text}")
                     continue
 
                 lj = lr.json() or {}
@@ -555,13 +576,11 @@ def shiprocket_create_from_orders(
 
                 label_url = lj.get("label_url")
                 not_created = lj.get("not_created") or []
-
                 failed_ids = {int(x) for x in not_created if str(x).isdigit()}
 
-                # if Shiprocket created label for this shipment_id
                 if label_url and sid not in failed_ids:
                     orders_collection.update_one(
-                        {"sr_shipment_id": sid},
+                        {"$or": [{"sr_shipment_id": sid}, {"sr_shipment_id": str(sid)}]},
                         {
                             "$set": {
                                 "label_url": label_url,
@@ -570,35 +589,104 @@ def shiprocket_create_from_orders(
                         },
                     )
                 else:
-                    errors.append(
-                        f"label_not_created_for: shipment_id={sid}, response={lj}"
-                    )
+                    errors.append(f"label_not_created_for: shipment_id={sid}, response={lj}")
 
             except Exception as e:
                 errors.append(f"label generation exception for {sid}: {e}")
 
-    # 4) Generate pickup
-    pickup_res = None
+    # 4) Generate pickup — grouped by pickup_location (Shiprocket often requires same pickup location)
+        # 4) Generate pickup — try grouped pickup, fallback to per-shipment if forbidden
+    pickup_res: Dict[str, Any] = {}
     if request_pickup and awb_results:
-        try:
-            rr = requests.post(
-                f"{SHIPROCKET_BASE}/v1/external/courier/generate/pickup",
-                headers=headers,
-                json={"shipment_id": [x["shipment_id"] for x in awb_results]},
-                timeout=30
-            )
-            if rr.status_code == 200:
-                pickup_res = rr.json()
-                orders_collection.update_many(
-                    {"sr_shipment_id": {
-                        "$in": [x["shipment_id"] for x in awb_results]}},
-                    {"$set": {"pickup_requested": True,
-                              "pickup_requested_at": datetime.utcnow().isoformat()}}
+        # Build mapping pickup_location -> [shipment_ids]
+        pickup_map: Dict[str, List[int]] = {}
+        for entry in awb_results:
+            sid = entry.get("shipment_id")
+            if sid is None:
+                continue
+            doc = orders_collection.find_one({"$or": [{"sr_shipment_id": sid}, {"sr_shipment_id": str(sid)}]})
+            pickup_loc = doc.get("shiprocket_pickup_location") if doc else None
+            key = str(pickup_loc) if pickup_loc else "default"
+            pickup_map.setdefault(key, []).append(int(sid))
+
+        for pickup_loc, sids in pickup_map.items():
+            if not sids:
+                continue
+
+            payload = {"shipment_id": sids}
+            # Optional: include pickup_location in payload (some accounts expect it)
+            if pickup_loc and pickup_loc != "default":
+                payload["pickup_location"] = pickup_loc
+
+            try:
+                rr = requests.post(
+                    f"{SHIPROCKET_BASE}/v1/external/courier/generate/pickup",
+                    headers=headers,
+                    json=payload,
+                    timeout=30
                 )
-            else:
-                errors.append(f"pickup failed {rr.status_code}: {rr.text}")
-        except Exception as e:
-            errors.append(f"pickup: exception {e}")
+            except Exception as e:
+                errors.append(f"pickup({pickup_loc}) exception grouped call: {e}")
+                rr = None
+
+            if rr is None:
+                continue
+
+            # capture response for debugging
+            try:
+                body = rr.json()
+            except Exception:
+                body = rr.text
+
+            if rr.status_code == 200:
+                pickup_res[pickup_loc] = body
+                orders_collection.update_many(
+                    {"$or": [{"sr_shipment_id": {"$in": sids}}, {"sr_shipment_id": {"$in": [str(x) for x in sids]}}]},
+                    {"$set": {"pickup_requested": True, "pickup_requested_at": datetime.utcnow().isoformat(),
+                              "pickup_location_used": pickup_loc}}
+                )
+                continue
+
+            # If 403 for bulk, fallback to per-shipment calls
+            if rr.status_code == 403 and "bulk" in str(body).lower():
+                errors.append(f"pickup({pickup_loc}) bulk forbidden, falling back to per-shipment. body={body}")
+                for sid in sids:
+                    try:
+                        single_payload = {"shipment_id": [sid]}
+                        # include pickup_location if available
+                        if pickup_loc and pickup_loc != "default":
+                            single_payload["pickup_location"] = pickup_loc
+
+                        sr = requests.post(
+                            f"{SHIPROCKET_BASE}/v1/external/courier/generate/pickup",
+                            headers=headers,
+                            json=single_payload,
+                            timeout=30
+                        )
+                    except Exception as e:
+                        errors.append(f"pickup({sid}) exception single call: {e}")
+                        continue
+
+                    try:
+                        sbody = sr.json()
+                    except Exception:
+                        sbody = sr.text
+
+                    if sr.status_code == 200:
+                        # store individual pickup response under a composite key
+                        pickup_res.setdefault(pickup_loc, {})[str(sid)] = sbody
+                        orders_collection.update_one(
+                            {"$or": [{"sr_shipment_id": sid}, {"sr_shipment_id": str(sid)}]},
+                            {"$set": {"pickup_requested": True, "pickup_requested_at": datetime.utcnow().isoformat(),
+                                      "pickup_location_used": pickup_loc}}
+                        )
+                    else:
+                        errors.append(f"pickup({sid}) single call failed {sr.status_code}: {sbody}")
+                continue
+
+            # other non-200 failure
+            errors.append(f"pickup({pickup_loc}) grouped failed {rr.status_code}: {body}")
+
 
     return {"created": created_refs, "awbs": awb_results, "pickup": pickup_res, "labels": label_res, "errors": errors}
 
