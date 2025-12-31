@@ -2,11 +2,18 @@
 
 import React from "react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
 import { Home, Package, Printer, Settings } from "lucide-react";
 
 function Sidebar() {
   const pathname = usePathname();
+  const searchParams = useSearchParams();
+
+  const printer = searchParams.get("printer");
+  const token = searchParams.get("token");
+
+  const query =
+    printer && token ? `?printer=${printer}&token=${token}` : "";
 
   return (
     <aside className="h-screen w-64 bg-gray-900 text-gray-100 flex flex-col">
@@ -19,7 +26,7 @@ function Sidebar() {
       <nav className="flex-1 px-4 py-6 space-y-2">
 
         <SidebarItem
-          href="/generate_labels"
+          href={`/generate_labels${query}`}
           icon={<Package size={18} />}
           label="Generate Labels"
           active={pathname === "/generate_labels"}
