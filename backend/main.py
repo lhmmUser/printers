@@ -13,10 +13,24 @@ import os
 import re
 import requests
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from barcode import Code128
+from barcode.writer import ImageWriter
+
 
 load_dotenv()
 
 app = FastAPI()
+
+# -----------------------------------------------------------------------------
+# Static files for barcodes
+# -----------------------------------------------------------------------------
+STATIC_DIR = "static"
+BARCODE_DIR = os.path.join(STATIC_DIR, "barcodes")
+os.makedirs(BARCODE_DIR, exist_ok=True)
+
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
 
 app.add_middleware(
     CORSMiddleware,
@@ -881,3 +895,38 @@ def shiprocket_test_tracking(shipment_id: int):
         return {"json": r.json() if r.status_code == 200 else r.text}
     except Exception as e:
         return {"ok": False, "error": str(e)}
+
+
+
+@app.post("/scan-order")
+def scan_order(order_id: str = Body(..., embed=True)):
+    doc = orders_collection.find_one({"order_id": order_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Order not found")
+
+    # Safety: if label already exists, just return it
+    if doc.get("label_url"):
+        return {
+            "status": "already_processed",
+            "order_id": order_id,
+            "label_url": doc["label_url"],
+        }
+
+    # Call your EXISTING Shiprocket flow
+    result = shiprocket_create_from_orders(
+        order_ids=[order_id],
+        assign_awb=True,
+        request_pickup=True,
+        generate_label=True,
+    )
+
+    # Fetch updated doc (label_url is set inside that function)
+    updated = orders_collection.find_one({"order_id": order_id})
+
+    return {
+        "status": "processed",
+        "order_id": order_id,
+        "label_url": updated.get("label_url"),
+        "shiprocket_response": result,
+    }
+

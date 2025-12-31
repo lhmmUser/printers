@@ -2,6 +2,8 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
+import Sidebar from "./components/Sidebar";
+
 
 type RawOrder = {
   order_id: string;
@@ -356,7 +358,7 @@ export default function GenesisShipDashboard() {
         try {
           const j = await res.json();
           msg = j.detail || JSON.stringify(j);
-        } catch {}
+        } catch { }
         throw new Error(msg);
       }
 
@@ -401,8 +403,8 @@ export default function GenesisShipDashboard() {
     if (isMutating) return;
 
     const confirmRun = window.confirm(
-    `This will try to sync labels for ALL ${printerKey.toUpperCase()} orders that already have sr_shipment_id but no label_url. Continue?`
-  );
+      `This will try to sync labels for ALL ${printerKey.toUpperCase()} orders that already have sr_shipment_id but no label_url. Continue?`
+    );
     if (!confirmRun) return;
 
     setIsSyncing(true);
@@ -438,10 +440,10 @@ export default function GenesisShipDashboard() {
 
       alert(
         `Sync completed.\n` +
-          `Matched documents: ${matched}\n` +
-          `Eligible shipments: ${eligible}\n` +
-          `Labels written: ${succeededCount}\n` +
-          `See console for full details.`
+        `Matched documents: ${matched}\n` +
+        `Eligible shipments: ${eligible}\n` +
+        `Labels written: ${succeededCount}\n` +
+        `See console for full details.`
       );
     } catch (e: any) {
       alert("Sync failed: " + (e?.message ?? "Unknown error"));
@@ -607,11 +609,10 @@ export default function GenesisShipDashboard() {
               whileTap={{ scale: 0.98 }}
               type="submit"
               disabled={isLoggingIn}
-              className={`w-full py-3 rounded-xl text-sm font-semibold text-white transition-all duration-200 ${
-                isLoggingIn
-                  ? "bg-blue-400 cursor-not-allowed"
-                  : "bg-gradient-to-r from-blue-600 to-blue-700 hover:shadow-lg"
-              }`}
+              className={`w-full py-3 rounded-xl text-sm font-semibold text-white transition-all duration-200 ${isLoggingIn
+                ? "bg-blue-400 cursor-not-allowed"
+                : "bg-gradient-to-r from-blue-600 to-blue-700 hover:shadow-lg"
+                }`}
             >
               {isLoggingIn ? (
                 <motion.span
@@ -641,13 +642,17 @@ export default function GenesisShipDashboard() {
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       transition={{ duration: 0.5 }}
-      className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100 py-3 px-6"
+      className="flex min-h-screen bg-gradient-to-br from-gray-50 to-gray-100"
     >
+
+      <Sidebar />
+
       <motion.div
         initial={{ y: -20 }}
         animate={{ y: 0 }}
-        className="max-w-9xl mx-auto"
+        className="w-full px-6 py-8"
       >
+
         <div>
           <div className="flex items-center justify-between gap-4">
             <motion.h2
@@ -725,11 +730,10 @@ export default function GenesisShipDashboard() {
                 }}
                 onClick={shipNow}
                 disabled={selected.size === 0 || isMutating}
-                className={`px-6 py-3 rounded-xl text-sm font-semibold transition-all duration-200 ${
-                  selected.size === 0 || isMutating
-                    ? "bg-gray-100 text-gray-400 cursor-not-allowed"
-                    : "bg-gradient-to-r from-blue-600 to-blue-700 text-white shadow-lg hover:shadow-xl"
-                }`}
+                className={`px-6 py-3 rounded-xl text-sm font-semibold transition-all duration-200 ${selected.size === 0 || isMutating
+                  ? "bg-gray-100 text-gray-400 cursor-not-allowed"
+                  : "bg-gradient-to-r from-blue-600 to-blue-700 text-white shadow-lg hover:shadow-xl"
+                  }`}
               >
                 {isShipping ? (
                   <motion.span
@@ -748,11 +752,10 @@ export default function GenesisShipDashboard() {
                 whileTap={{ scale: !isMutating ? 0.98 : 1 }}
                 onClick={syncOrders}
                 disabled={isMutating}
-                className={`px-6 py-3 rounded-xl text-sm font-semibold transition-all duration-200 ${
-                  isMutating
-                    ? "bg-gray-100 text-gray-400 cursor-not-allowed"
-                    : "bg-gradient-to-r from-green-600 to-green-700 text-white shadow-lg hover:shadow-xl"
-                }`}
+                className={`px-6 py-3 rounded-xl text-sm font-semibold transition-all duration-200 ${isMutating
+                  ? "bg-gray-100 text-gray-400 cursor-not-allowed"
+                  : "bg-gradient-to-r from-green-600 to-green-700 text-white shadow-lg hover:shadow-xl"
+                  }`}
               >
                 {isSyncing ? "Syncing…" : "Sync Orders"}
               </motion.button>
@@ -841,11 +844,10 @@ export default function GenesisShipDashboard() {
                           animate={{ opacity: 1, y: 0 }}
                           exit={{ opacity: 0, y: -4 }}
                           transition={{ duration: 0.15 }}
-                          className={`hover:bg-gray-50 ${
-                            selected.has(order.order_id)
-                              ? "bg-blue-50/60"
-                              : ""
-                          }`}
+                          className={`hover:bg-gray-50 ${selected.has(order.order_id)
+                            ? "bg-blue-50/60"
+                            : ""
+                            }`}
                         >
                           <td className="px-4 py-3">
                             <input
@@ -947,11 +949,10 @@ export default function GenesisShipDashboard() {
                       <button
                         key={idx}
                         onClick={() => gotoPage(item as number)}
-                        className={`px-2 py-1 rounded-md ${
-                          item === currentPage
-                            ? "bg-blue-600 text-white"
-                            : "text-gray-600 hover:bg-gray-100"
-                        } text-xs`}
+                        className={`px-2 py-1 rounded-md ${item === currentPage
+                          ? "bg-blue-600 text-white"
+                          : "text-gray-600 hover:bg-gray-100"
+                          } text-xs`}
                       >
                         {item}
                       </button>
