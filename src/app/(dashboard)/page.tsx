@@ -30,23 +30,24 @@ type UserConfig = {
 const USERS: UserConfig[] = [
   {
     username: "genesis",
-    password: "genesis123",
+    password: "G3n3s!sP@ss",
     printer: "genesis",
-    token: "GENESIS123",
+    token: "Q7F9sX2M8VwRkA3ZP4mJtE6D5HcLNYUeGqKBa",
   },
   {
     username: "yara",
-    password: "yara123",
+    password: "Y@r@P#ss123",
     printer: "yara",
-    token: "YARA123",
+    token: "Zk4T8H9J2c5sA3VwP6MELXRYFQNDmUGB7qKe",
   },
   {
     username: "admin",
-    password: "admin123",
+    password: "@dm!nAcc3ss",
     printer: "admin",
-    token: "ADMIN999",
+    token: "9M8qKZJ2F6XcR4A5wDHBtELPsNYGVUm",
   },
 ];
+
 
 function formatPrintSentAt(value?: string): string {
   if (!value) return "-";

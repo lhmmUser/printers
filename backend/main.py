@@ -93,10 +93,11 @@ def generate_book_title(book_id: str, child_name: Optional[str]) -> str:
 
 
 PRINTER_TOKENS = {
-    "genesis": os.getenv("GENESIS_TOKEN", "GENESIS123"),
-    "yara": os.getenv("YARA_TOKEN", "YARA123"),
-    "admin": os.getenv("ADMIN_TOKEN", "ADMIN999"),
+    "genesis": "Q7F9sX2M8VwRkA3ZP4mJtE6D5HcLNYUeGqKBa",
+    "yara": "Zk4T8H9J2c5sA3VwP6MELXRYFQNDmUGB7qKe",
+    "admin": "9M8qKZJ2F6XcR4A5wDHBtELPsNYGVUm",
 }
+
 
 
 @app.get("/orders")
