@@ -52,35 +52,34 @@ const USERS: UserConfig[] = [
 function formatPrintSentAt(value?: string): string {
   if (!value) return "-";
 
-  let normalized = value;
+  // Remove microseconds if present (JS can't parse 6 digits properly)
+  const cleaned = value.replace(/\.\d+/, "");
 
-  if (!/[zZ]|[+-]\d{2}:?\d{2}$/.test(value)) {
-    normalized = value.replace(/(\.\d{3})\d+/, "$1") + "Z";
+  // Manually split instead of letting Date() auto-convert timezone
+  const [datePart, timePart] = cleaned.split("T");
+  if (!datePart || !timePart) return value;
+
+  const [year, month, day] = datePart.split("-").map(Number);
+  const [hour, minute] = timePart.split(":").map(Number);
+
+  if (
+    !year || !month || !day ||
+    hour === undefined || minute === undefined
+  ) {
+    return value;
   }
 
-  const d = new Date(normalized);
-  if (isNaN(d.getTime())) return value;
-
-  const day = d.getDate();
   const months = [
-    "JAN",
-    "FEB",
-    "MAR",
-    "APR",
-    "MAY",
-    "JUN",
-    "JUL",
-    "AUG",
-    "SEP",
-    "OCT",
-    "NOV",
-    "DEC",
+    "JAN", "FEB", "MAR", "APR", "MAY", "JUN",
+    "JUL", "AUG", "SEP", "OCT", "NOV", "DEC",
   ];
-  const month = months[d.getMonth()];
-  const hh = d.getHours().toString().padStart(2, "0");
-  const mm = d.getMinutes().toString().padStart(2, "0");
 
-  return `${day} ${month} ${hh}:${mm}`;
+  const dd = day.toString().padStart(2, "0");
+  const mon = months[month - 1];
+  const hh = hour.toString().padStart(2, "0");
+  const mm = minute.toString().padStart(2, "0");
+
+  return `${dd} ${mon} ${hh}:${mm}`;
 }
 
 export default function GenesisShipDashboard() {
